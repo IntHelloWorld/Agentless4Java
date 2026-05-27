@@ -1,3 +1,12 @@
+# Agentless4Java
+
+We modify the original Agentless to support fault localization for Java projects.
+For now, it can be run on the Defects4J benchmark.
+
+Please unzip the `data.zip` to `data` under the root directory, it contains all of the bug meta data extracted from Defects4J.
+
+The commands for running Agentless4Java can be found in `AgentFL4Java/run_localize.sh`
+
 # 😺 Agentless
 
 <p align="center">
