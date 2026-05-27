@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
 
+from AgentFL4Java.d4j_interface import D4JRepositoryInterface
 from agentless.repair.repair import construct_topn_file_context
 from agentless.util.compress_file import get_skeleton
+from agentless.util.compress_file_java import get_skeleton_java
 from agentless.util.postprocess_data import extract_code_blocks, extract_locs_for_files
 from agentless.util.preprocess_data import (
     correct_file_paths,
@@ -9,6 +11,7 @@ from agentless.util.preprocess_data import (
     get_repo_files,
     line_wrap_content,
     show_project_structure,
+    show_project_structure_java,
 )
 
 MAX_CONTEXT_LENGTH = 128000
@@ -31,6 +34,40 @@ Please look through the following GitHub problem description and Repository stru
 
 ### GitHub Problem Description ###
 {problem_statement}
+
+###
+
+### Repository Structure ###
+{structure}
+
+###
+
+Please only provide the full path and return at most 5 files.
+The returned files should be separated by new lines ordered by most to least important and wrapped with ```
+For example:
+```
+file1.py
+file2.py
+```
+"""
+
+    obtain_relevant_files_prompt_java = """
+Please look through the following test failure description and Repository structure and provide a list of files that one would need to edit to fix the bug.
+
+### Test Failure Description ###
+The test `{fail_test_signatures}` failed.
+
+The test looks like:
+
+```java
+{test_snippets}
+```
+
+It failed with the following error message and call stack:
+
+```
+{failing_traces}
+```
 
 ###
 
@@ -74,6 +111,44 @@ folder4/folder5/
 ```
 """
 
+    obtain_irrelevant_files_prompt_java = """
+Please look through the following test failure description and Repository structure and provide a list of folders that are irrelevant to fixing the bug.
+Note that irrelevant folders are those that do not need to be modified and are safe to ignored when trying to solve this bug.
+
+### Test Failure Description ###
+The test `{fail_test_signatures}` failed.
+
+The test looks like:
+
+```java
+{test_snippets}
+```
+
+It failed with the following error message and call stack:
+
+```
+{failing_traces}
+```
+
+###
+
+### Repository Structure ###
+{structure}
+
+###
+
+Please only provide the full path.
+Remember that any subfolders will be considered as irrelevant if you provide the parent folder.
+Please ensure that the provided irrelevant folders do not include any important files needed to fix the problem
+The returned folders should be separated by new lines and wrapped with ```
+For example:
+```
+folder1/
+folder2/folder3/
+folder4/folder5/
+```
+"""
+
     file_content_template = """
 ### File: {file_name} ###
 {file_content}
@@ -81,6 +156,12 @@ folder4/folder5/
     file_content_in_block_template = """
 ### File: {file_name} ###
 ```python
+{file_content}
+```
+"""
+    file_content_in_block_template_java = """
+### File: {file_name} ###
+```java
 {file_content}
 ```
 """
@@ -183,6 +264,45 @@ class: MyClass5
 Return just the locations.
 """
 
+    obtain_relevant_functions_and_vars_from_compressed_files_prompt_more_java = """
+Please look through the following test failure description and the Skeleton of Relevant Files.
+Identify all locations that need inspection or editing to fix the bug, including directly related areas as well as any potentially related methods.
+For each location you provide, give the name of a method in a class.
+
+### Test Failure Description ###
+The test `{fail_test_signatures}` failed.
+
+The test looks like:
+
+```java
+{test_snippets}
+```
+
+It failed with the following error message and call stack:
+
+```
+{failing_traces}
+```
+
+### Skeleton of Relevant Files ###
+{file_contents}
+
+###
+
+Please provide the complete set of locations as a method name.
+You can include ONLY ONE method for a class.
+### Examples:
+```
+full_path1/file1.py
+method: MyClass1.my_method
+
+full_path2/file2.py
+method: MyClass2.my_method_1
+```
+
+Return just the locations.
+"""
+
     obtain_relevant_functions_and_vars_from_raw_files_prompt = """
 Please look through the following GitHub Problem Description and Relevant Files.
 Identify all locations that need inspection or editing to fix the problem, including directly related areas as well as any potentially related global variables, functions, and classes.
@@ -244,10 +364,22 @@ Return just the locations.
         from agentless.util.api_requests import num_tokens_from_messages
         from agentless.util.model import make_model
 
-        message = self.obtain_irrelevant_files_prompt.format(
-            problem_statement=self.problem_statement,
-            structure=show_project_structure(self.structure).strip(),
+        bug_name = self.instance_id.replace('@', '_')
+        d4j_interface = D4JRepositoryInterface(bug_name)
+        fail_test_signatures = [
+            signature for signature in d4j_interface.failing_test_signatures
+            if d4j_interface.get_test_snippet(signature) is not None
+        ]
+        test_snippets = "\n\n".join(d4j_interface.get_test_snippet(signature).rstrip() for signature in fail_test_signatures)
+        failing_traces = "\n\n".join(d4j_interface.get_fail_info(signature, minimize=True).rstrip() for signature in fail_test_signatures)
+
+        message = self.obtain_irrelevant_files_prompt_java.format(
+            fail_test_signatures=fail_test_signatures,
+            test_snippets=test_snippets,
+            failing_traces=failing_traces,
+            structure=show_project_structure_java(self.structure).strip(),
         ).strip()
+        
         self.logger.info(f"prompting with message:\n{message}")
         self.logger.info("=" * 80)
 
@@ -312,11 +444,23 @@ Return just the locations.
         from agentless.util.model import make_model
 
         found_files = []
+        
+        bug_name = self.instance_id.replace('@', '_')
+        d4j_interface = D4JRepositoryInterface(bug_name)
+        fail_test_signatures = [
+            signature for signature in d4j_interface.failing_test_signatures
+            if d4j_interface.get_test_snippet(signature) is not None
+        ]
+        test_snippets = "\n\n".join(d4j_interface.get_test_snippet(signature).rstrip() for signature in fail_test_signatures)
+        failing_traces = "\n\n".join(d4j_interface.get_fail_info(signature, minimize=True).rstrip() for signature in fail_test_signatures)
 
-        message = self.obtain_relevant_files_prompt.format(
-            problem_statement=self.problem_statement,
-            structure=show_project_structure(self.structure).strip(),
+        message = self.obtain_relevant_files_prompt_java.format(
+            fail_test_signatures=fail_test_signatures,
+            test_snippets=test_snippets,
+            failing_traces=failing_traces,
+            structure=show_project_structure_java(self.structure).strip(),
         ).strip()
+        # print(f"Localize files, prompt tokens:{num_tokens_from_messages(message, self.model_name)}")
         self.logger.info(f"prompting with message:\n{message}")
         self.logger.info("=" * 80)
         if mock:
@@ -373,7 +517,7 @@ Return just the locations.
 
         file_contents = get_repo_files(self.structure, file_names)
         compressed_file_contents = {
-            fn: get_skeleton(
+            fn: get_skeleton_java(
                 code,
                 compress_assign=compress_assign,
                 total_lines=total_lines,
@@ -383,15 +527,28 @@ Return just the locations.
             for fn, code in file_contents.items()
         }
         contents = [
-            self.file_content_in_block_template.format(file_name=fn, file_content=code)
+            self.file_content_in_block_template_java.format(file_name=fn, file_content=code)
             for fn, code in compressed_file_contents.items()
         ]
         file_contents = "".join(contents)
+        
+        bug_name = self.instance_id.replace('@', '_')
+        d4j_interface = D4JRepositoryInterface(bug_name)
+        fail_test_signatures = [
+            signature for signature in d4j_interface.failing_test_signatures
+            if d4j_interface.get_test_snippet(signature) is not None
+        ]
+        test_snippets = "\n\n".join(d4j_interface.get_test_snippet(signature).rstrip() for signature in fail_test_signatures)
+        failing_traces = "\n\n".join(d4j_interface.get_fail_info(signature, minimize=True).rstrip() for signature in fail_test_signatures)
+        
         template = (
-            self.obtain_relevant_functions_and_vars_from_compressed_files_prompt_more
+            self.obtain_relevant_functions_and_vars_from_compressed_files_prompt_more_java
         )
         message = template.format(
-            problem_statement=self.problem_statement, file_contents=file_contents
+            fail_test_signatures=fail_test_signatures,
+            test_snippets=test_snippets,
+            failing_traces=failing_traces,
+            file_contents=file_contents
         )
         self.logger.info(f"prompting with message:")
         self.logger.info("\n" + message)
@@ -406,7 +563,10 @@ Return just the locations.
             contents = contents[:-1]
             file_contents = "".join(contents)
             message = template.format(
-                problem_statement=self.problem_statement, file_contents=file_contents
+                fail_test_signatures=fail_test_signatures,
+                test_snippets=test_snippets,
+                failing_traces=failing_traces,
+                file_contents=file_contents
             )  # Recreate message
 
         if message_too_long(message):

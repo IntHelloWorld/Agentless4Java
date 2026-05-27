@@ -33,7 +33,8 @@ def create_chatgpt_config(
             "max_tokens": max_tokens,
             "temperature": temperature,
             "n": batch_size,
-            "messages": [{"role": "system", "content": system_message}] + message,
+            "messages": [{"role": "system", "content": system_message}]
+            + message,
         }
     else:
         config = {
@@ -54,11 +55,16 @@ def handler(signum, frame):
     raise Exception("end of time")
 
 
-def request_chatgpt_engine(config, logger, base_url=None, max_retries=40, timeout=100):
+def request_chatgpt_engine(
+    config, logger, base_url=None, max_retries=40, timeout=100
+):
     ret = None
     retries = 0
 
-    client = openai.OpenAI(base_url=base_url)
+    client = openai.OpenAI(
+        api_key="sk-K7cwL72K1MDw3MwEbmFAhr9ZOEMCUi4WtlgMzt23jm3bbe5K",
+        base_url="https://api.key77qiqi.cn/v1",
+    )
 
     while ret is None and retries < max_retries:
         try:
@@ -129,7 +135,9 @@ def create_anthropic_config(
     return config
 
 
-def request_anthropic_engine(client, config, logger, max_retries=40, timeout=100):
+def request_anthropic_engine(
+    client, config, logger, max_retries=40, timeout=100
+):
     ret = None
     retries = 0
 

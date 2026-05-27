@@ -30,7 +30,9 @@ def line_wrap_content(
     line_format = "{line}"
     if not no_line_number:
         line_format = (
-            "{line_number}|{line}" if not add_space else "{line_number}| {line} "
+            "{line_number}|{line}"
+            if not add_space
+            else "{line_number}| {line} "
         )
     for interval in context_intervals:
         min_line, max_line = interval
@@ -44,10 +46,16 @@ def line_wrap_content(
                 # add current line to scope if necessary
                 if is_scope(line):
                     indent_level = len(line) - len(line.lstrip())
-                    while scopes and scopes[-1]["indent_level"] >= indent_level:
+                    while (
+                        scopes and scopes[-1]["indent_level"] >= indent_level
+                    ):
                         scopes.pop()
                     scopes.append(
-                        {"line": line, "line_number": i, "indent_level": indent_level}
+                        {
+                            "line": line,
+                            "line_number": i,
+                            "indent_level": indent_level,
+                        }
                     )
 
             if min_line != -1 and i < min_line - 1:
@@ -59,7 +67,8 @@ def line_wrap_content(
                     # don't repeat previous scopes
                     if (
                         len(prev_scopes) > j
-                        and prev_scopes[j]["line_number"] == scope_line["line_number"]
+                        and prev_scopes[j]["line_number"]
+                        == scope_line["line_number"]
                     ):
                         continue
                     # don't repeat current line
@@ -122,7 +131,9 @@ def transfer_arb_locs_to_locs(
     verbose=False,
 ) -> tuple[list, list]:
     if structure is None:
-        class_info, function_names, file_lines = parse_python_file("", file_content)
+        class_info, function_names, file_lines = parse_python_file(
+            "", file_content
+        )
         structure = {}
         structure[pred_file] = {
             "classes": class_info,
@@ -130,7 +141,9 @@ def transfer_arb_locs_to_locs(
             "text": file_lines,
         }
 
-    files, classes, functions = get_full_file_paths_and_classes_and_functions(structure)
+    files, classes, functions = get_full_file_paths_and_classes_and_functions(
+        structure
+    )
 
     line_loc = []
     if isinstance(locs, str):
@@ -156,7 +169,10 @@ def transfer_arb_locs_to_locs(
                     unrecognized_locs.append(loc)
                 else:
                     line_loc.append(
-                        (relevant_class[0]["start_line"], relevant_class[0]["end_line"])
+                        (
+                            relevant_class[0]["start_line"],
+                            relevant_class[0]["end_line"],
+                        )
                     )
                     current_class_name = loc
 
@@ -172,7 +188,8 @@ def transfer_arb_locs_to_locs(
                     relevant_class = [
                         clazz
                         for clazz in classes
-                        if clazz["file"] == pred_file and clazz["name"] == class_name
+                        if clazz["file"] == pred_file
+                        and clazz["name"] == class_name
                     ]
                     if len(relevant_class) == 0:
                         unrecognized_locs.append(loc)
@@ -196,7 +213,8 @@ def transfer_arb_locs_to_locs(
                     relevant_function = [
                         function
                         for function in functions
-                        if function["file"] == pred_file and function["name"] == loc
+                        if function["file"] == pred_file
+                        and function["name"] == loc
                     ]
                     if len(relevant_function) == 0:
                         if current_class_name != "":
@@ -263,7 +281,10 @@ def transfer_arb_locs_to_locs(
                 for v in vars:
                     if v in global_vars:
                         line_loc.append(
-                            (global_vars[v]["start_line"], global_vars[v]["end_line"])
+                            (
+                                global_vars[v]["start_line"],
+                                global_vars[v]["end_line"],
+                            )
                         )
             else:
                 if loc.strip():
@@ -316,7 +337,9 @@ def transfer_arb_locs_to_locs(
         return line_loc, merge_intervals(contextual_line_loc)
     else:
         # defaulting to max min
-        max_line = min(max([loc[1] for loc in line_loc]) + context_window, len(content))
+        max_line = min(
+            max([loc[1] for loc in line_loc]) + context_window, len(content)
+        )
         min_line = max(min([loc[0] for loc in line_loc]) - context_window, 0)
 
         return line_loc, [(min_line, max_line)]
@@ -335,7 +358,9 @@ def check_contains_valid_loc(file_to_locs, structure):
             0,  # these parameters do not matter for checking purposes
             True,  # these parameters do not matter for checking purposes
             False,  # these parameters do not matter for checking purposes
-            file_content=file_contents[pred_file] if pred_file in file_contents else "",
+            file_content=(
+                file_contents[pred_file] if pred_file in file_contents else ""
+            ),
         )
 
         if len(line_locs) > 0:
@@ -398,10 +423,28 @@ def show_project_structure(structure, spacing=0) -> str:
     return pp_string
 
 
+def show_project_structure_java(structure, spacing=0) -> str:
+    """pprint the project structure"""
+
+    pp_string = ""
+
+    for key, value in structure.items():
+        if "." in key and ".java" not in key:
+            continue  # skip none java files
+        if "." in key:
+            pp_string += " " * spacing + str(key) + "\n"
+        else:
+            pp_string += " " * spacing + str(key) + "/" + "\n"
+        if "classes" not in value:
+            pp_string += show_project_structure_java(value, spacing + 4)
+
+    return pp_string
+
+
 def filter_out_test_files(structure):
     """filter out test files from the project structure"""
     for key, value in list(structure.items()):
-        if key.startswith("test"):
+        if key.startswith("tests"):
             del structure[key]
         elif isinstance(value, dict):
             filter_out_test_files(value)
@@ -420,6 +463,22 @@ def filter_none_python(structure):
                 del structure[key]
         else:
             if not key.endswith(".py"):
+                del structure[key]
+
+
+def filter_none_java(structure):
+    for key, value in list(structure.items()):
+        if (
+            not "functions" in value.keys()
+            and not "classes" in value.keys()
+            and not "text" in value.keys()
+        ) or not len(value.keys()) == 3:
+            filter_none_java(value)
+
+            if structure[key] == {}:
+                del structure[key]
+        else:
+            if not key.endswith(".java"):
                 del structure[key]
 
 
@@ -482,7 +541,9 @@ def filter_proposed_classes(proposed_classes, repo_structure):
             _, repo_classes, _ = get_full_file_paths_and_classes_and_functions(
                 instance_to_structure[instance_id]
             )
-            repo_classes_set = {clazz["name"]: clazz["file"] for clazz in repo_classes}
+            repo_classes_set = {
+                clazz["name"]: clazz["file"] for clazz in repo_classes
+            }
             valid_classes = []
             for proposed_class in classes:
                 if proposed_class in repo_classes_set:
@@ -552,7 +613,8 @@ def filter_proposed_functions(proposed_functions, repo_structure):
     A list of dictionaries with instance IDs and valid functions matching the repository structure.
     """
     instance_to_functions = {
-        entry["instance_id"]: entry["functions"] for entry in proposed_functions
+        entry["instance_id"]: entry["functions"]
+        for entry in proposed_functions
     }
     instance_to_structure = {
         entry["instance_id"]: entry["structure"] for entry in repo_structure
@@ -560,8 +622,10 @@ def filter_proposed_functions(proposed_functions, repo_structure):
     filtered_functions = []
     for instance_id, functions in instance_to_functions.items():
         if instance_id in instance_to_structure:
-            _, _, repo_functions = get_full_file_paths_and_classes_and_functions(
-                instance_to_structure[instance_id]
+            _, _, repo_functions = (
+                get_full_file_paths_and_classes_and_functions(
+                    instance_to_structure[instance_id]
+                )
             )
             valid_functions = []
             for repo_function in repo_functions:
@@ -571,7 +635,10 @@ def filter_proposed_functions(proposed_functions, repo_structure):
                     ):  # Why are there cases where this is not a dict?
                         if function == repo_function["name"].get("name", []):
                             valid_functions.append(
-                                {"function": function, "file": repo_function["file"]}
+                                {
+                                    "function": function,
+                                    "file": repo_function["file"],
+                                }
                             )
             if valid_functions:
                 filtered_functions.append(
@@ -610,7 +677,9 @@ def get_full_file_paths_and_classes_and_functions(structure, current_path=""):
                     sub_files,
                     sub_classes,
                     sub_functions,
-                ) = get_full_file_paths_and_classes_and_functions(content, next_path)
+                ) = get_full_file_paths_and_classes_and_functions(
+                    content, next_path
+                )
                 files.extend(sub_files)
                 classes.extend(sub_classes)
                 functions.extend(sub_functions)
@@ -648,7 +717,9 @@ def get_full_file_paths_and_classes_and_functions(structure, current_path=""):
 PROJECT_FILE_LOC = os.environ.get("PROJECT_FILE_LOC", None)
 
 
-def get_repo_structure(instance_id: str, repo_name, base_commit, playground):
+def get_repo_structure(
+    instance_id: str, repo_name, base_commit, subproj, playground
+):
 
     if PROJECT_FILE_LOC is not None:
         with open(PROJECT_FILE_LOC + "/" + instance_id + ".json") as f:
@@ -656,7 +727,7 @@ def get_repo_structure(instance_id: str, repo_name, base_commit, playground):
         repo_structure = d["structure"]
     else:
         d = get_project_structure_from_scratch(
-            repo_name, base_commit, instance_id, playground
+            repo_name, base_commit, subproj, instance_id, playground
         )
         repo_structure = d["structure"]
 
@@ -664,7 +735,9 @@ def get_repo_structure(instance_id: str, repo_name, base_commit, playground):
 
 
 def get_repo_files(structure, filepaths: list[str]):
-    files, classes, functions = get_full_file_paths_and_classes_and_functions(structure)
+    files, classes, functions = get_full_file_paths_and_classes_and_functions(
+        structure
+    )
     file_contents = dict()
     for filepath in filepaths:
         content = None
@@ -672,10 +745,11 @@ def get_repo_files(structure, filepaths: list[str]):
         for file_content in files:
             if file_content[0] == filepath:
                 content = "\n".join(file_content[1])
-                file_contents[filepath] = content
+                if content:
+                    file_contents[filepath] = content
                 break
 
-        assert content is not None, "file not found"
+        # assert content is not None, "file not found"
     return file_contents
 
 
@@ -697,7 +771,9 @@ def clean_method_left_space(method_code: str) -> str:
         method_code.splitlines()[0].lstrip()
     )
     # remove indent_space in each line
-    return "\n".join([line[indent_space:] for line in method_code.splitlines()])
+    return "\n".join(
+        [line[indent_space:] for line in method_code.splitlines()]
+    )
 
 
 def test_correct_file_paths():
@@ -742,7 +818,11 @@ def test_correct_file_paths():
 
     # Test case 6: File without any folders with two matches
     model_files6 = ["data.txt"]
-    files6 = [("project/data_analysis/data.txt",), ("data/config.yaml",), ("data.txt",)]
+    files6 = [
+        ("project/data_analysis/data.txt",),
+        ("data/config.yaml",),
+        ("data.txt",),
+    ]
     result6 = correct_file_paths(model_files6, files6)
     assert result6 == ["data.txt"], f"Expected ['data.txt'], but got {result6}"
 

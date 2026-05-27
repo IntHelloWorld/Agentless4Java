@@ -7,14 +7,20 @@ from threading import Lock
 from datasets import load_dataset
 from tqdm import tqdm
 
+from AgentFL4Java.dataset import ALL_BUGS
 from agentless.fl.FL import LLMFL
 from agentless.util.preprocess_data import (
     check_contains_valid_loc,
+    filter_none_java,
     filter_none_python,
     filter_out_test_files,
     get_repo_structure,
 )
-from agentless.util.utils import load_existing_instance_ids, load_jsonl, setup_logger
+from agentless.util.utils import (
+    load_existing_instance_ids,
+    load_jsonl,
+    setup_logger,
+)
 
 MAX_RETRIES = 5
 
@@ -39,14 +45,16 @@ def localize_irrelevant_instance(
 
     logger.info(f"================ localize {instance_id} ================")
 
-    bench_data = [x for x in swe_bench_data if x["instance_id"] == instance_id][0]
-    problem_statement = bench_data["problem_statement"]
+    # bench_data = [x for x in swe_bench_data if x["instance_id"] == instance_id][0]
+    # problem_statement = bench_data["problem_statement"]
+    problem_statement = None
     structure = get_repo_structure(
-        instance_id, bug["repo"], bug["base_commit"], "playground"
+        instance_id, bug["repo"], bug["base_commit"], bug["subproj"], "playground"
     )
 
-    filter_none_python(structure)  # some basic filtering steps
-    filter_out_test_files(structure)
+    # filter_none_python(structure)  # some basic filtering steps
+    filter_none_java(structure)
+    # filter_out_test_files(structure)
 
     found_files = []
     found_related_locs = {}
@@ -67,8 +75,8 @@ def localize_irrelevant_instance(
             args.backend,
             logger,
         )
-        found_files, additional_artifact_loc_file, file_traj = fl.localize_irrelevant(
-            mock=args.mock
+        found_files, additional_artifact_loc_file, file_traj = (
+            fl.localize_irrelevant(mock=args.mock)
         )
     else:
         raise NotImplementedError
@@ -98,7 +106,12 @@ def localize_irrelevant_instance(
 
 
 def localize_instance(
-    bug, args, swe_bench_data, start_file_locs, existing_instance_ids, write_lock=None
+    bug,
+    args,
+    swe_bench_data,
+    start_file_locs,
+    existing_instance_ids,
+    write_lock=None,
 ):
     instance_id = bug["instance_id"]
     log_file = os.path.join(
@@ -116,16 +129,22 @@ def localize_instance(
         return
 
     structure = get_repo_structure(
-        instance_id, bug["repo"], bug["base_commit"], "playground"
+        instance_id,
+        bug["repo"],
+        bug["base_commit"],
+        bug["subproj"],
+        "playground",
     )
 
     logger.info(f"================ localize {instance_id} ================")
 
-    bench_data = [x for x in swe_bench_data if x["instance_id"] == instance_id][0]
-    problem_statement = bench_data["problem_statement"]
+    # bench_data = [x for x in swe_bench_data if x["instance_id"] == instance_id][0]
+    # problem_statement = bench_data["problem_statement"]
+    problem_statement = None
 
-    filter_none_python(structure)  # some basic filtering steps
-    filter_out_test_files(structure)
+    # filter_none_python(structure)  # some basic filtering steps
+    filter_none_java(structure)
+    # filter_out_test_files(structure)
 
     found_files = []
     found_related_locs = {}
@@ -154,7 +173,9 @@ def localize_instance(
             if locs["instance_id"] == instance_id:
                 found_files = locs["found_files"]
                 if "additional_artifact_loc_file" in locs:
-                    additional_artifact_loc_file = locs["additional_artifact_loc_file"]
+                    additional_artifact_loc_file = locs[
+                        "additional_artifact_loc_file"
+                    ]
                     file_traj = locs["file_traj"]
                 if "found_related_locs" in locs:
                     found_related_locs = locs["found_related_locs"]
@@ -200,7 +221,9 @@ def localize_instance(
                         prefix_lines=args.compress_assign_prefix_lines,
                         suffix_lines=args.compress_assign_suffix_lines,
                     )
-                    additional_artifact_loc_related = [additional_artifact_loc_related]
+                    additional_artifact_loc_related = [
+                        additional_artifact_loc_related
+                    ]
                     related_loc_trajs.append(related_loc_traj)
 
                     if check_contains_valid_loc(
@@ -231,7 +254,9 @@ def localize_instance(
                             prefix_lines=args.compress_assign_prefix_lines,
                             suffix_lines=args.compress_assign_suffix_lines,
                         )
-                        found_related_locs[pred_file] = found_related_locs_i[pred_file]
+                        found_related_locs[pred_file] = found_related_locs_i[
+                            pred_file
+                        ]
                         additional_artifact_loc_related.append(
                             additional_artifact_loc_related_i
                         )
@@ -255,7 +280,9 @@ def localize_instance(
                         temperature=trying_temp,
                         keep_old_order=args.keep_old_order,
                     )
-                    additional_artifact_loc_related = [additional_artifact_loc_related]
+                    additional_artifact_loc_related = [
+                        additional_artifact_loc_related
+                    ]
                     related_loc_trajs.append(related_loc_traj)
 
                     if check_contains_valid_loc(
@@ -396,12 +423,34 @@ def localize_instance(
 
 
 def localize_irrelevant(args):
-    swe_bench_data = load_dataset(args.dataset, split="test")
+    # swe_bench_data = load_dataset(args.dataset, split="test")
+    swe_bench_data = None
     existing_instance_ids = (
-        load_existing_instance_ids(args.output_file) if args.skip_existing else set()
+        load_existing_instance_ids(args.output_file)
+        if args.skip_existing
+        else set()
     )
+    bugs = []
+    for version in ALL_BUGS:
+        for proj in ALL_BUGS[version]:
+            subproj = (
+                ALL_BUGS[version][proj][2]
+                if version == "GrowingBugs"
+                else None
+            )
+            for bug_id in ALL_BUGS[version][proj][0]:
+                if bug_id in ALL_BUGS[version][proj][1]:
+                    continue
+                instance_id = f"{proj}@{bug_id}"
+                bug = {
+                    "instance_id": instance_id,
+                    "repo": proj,
+                    "base_commit": None,
+                    "subproj": subproj,
+                }
+                bugs.append(bug)
     if args.num_threads == 1:
-        for bug in tqdm(swe_bench_data, colour="MAGENTA"):
+        for bug in tqdm(bugs, colour="MAGENTA"):
             localize_irrelevant_instance(
                 bug, args, swe_bench_data, existing_instance_ids
             )
@@ -419,27 +468,54 @@ def localize_irrelevant(args):
                     existing_instance_ids,
                     write_lock,
                 )
-                for bug in swe_bench_data
+                for bug in bugs
             ]
             for future in tqdm(
                 concurrent.futures.as_completed(futures),
-                total=len(swe_bench_data),
+                total=len(bugs),
                 colour="MAGENTA",
             ):
                 future.result()
 
 
 def localize(args):
-    swe_bench_data = load_dataset(args.dataset, split="test")
+    # swe_bench_data = load_dataset(args.dataset, split="test")
+    swe_bench_data = None
     start_file_locs = load_jsonl(args.start_file) if args.start_file else None
+    # start_file_locs = None
     existing_instance_ids = (
-        load_existing_instance_ids(args.output_file) if args.skip_existing else set()
+        load_existing_instance_ids(args.output_file)
+        if args.skip_existing
+        else set()
     )
+    bugs = []
+    for version in ALL_BUGS:
+        for proj in ALL_BUGS[version]:
+            subproj = (
+                ALL_BUGS[version][proj][2]
+                if version == "GrowingBugs"
+                else None
+            )
+            for bug_id in ALL_BUGS[version][proj][0]:
+                if bug_id in ALL_BUGS[version][proj][1]:
+                    continue
+                instance_id = f"{proj}@{bug_id}"
+                bug = {
+                    "instance_id": instance_id,
+                    "repo": proj,
+                    "base_commit": None,
+                    "subproj": subproj,
+                }
+                bugs.append(bug)
 
     if args.num_threads == 1:
-        for bug in tqdm(swe_bench_data, colour="MAGENTA"):
+        for bug in tqdm(bugs, colour="MAGENTA"):
             localize_instance(
-                bug, args, swe_bench_data, start_file_locs, existing_instance_ids
+                bug,
+                args,
+                swe_bench_data,
+                start_file_locs,
+                existing_instance_ids,
             )
     else:
         write_lock = Lock()
@@ -456,11 +532,11 @@ def localize(args):
                     existing_instance_ids,
                     write_lock,
                 )
-                for bug in swe_bench_data
+                for bug in bugs
             ]
             for future in tqdm(
                 concurrent.futures.as_completed(futures),
-                total=len(swe_bench_data),
+                total=len(bugs),
                 colour="MAGENTA",
             ):
                 future.result()
@@ -474,12 +550,17 @@ def merge(args):
         merged_found_locs = {}
         for locs in sample_found_locs:
             for fn, file_found_locs in locs.items():
-                if isinstance(file_found_locs, str) and file_found_locs.strip():
-                    merged_found_locs.setdefault(fn, [""])[0] += "\n" + file_found_locs
-                elif "\n".join(file_found_locs).strip():
-                    merged_found_locs.setdefault(fn, [""])[0] += "\n" + "\n".join(
-                        file_found_locs
+                if (
+                    isinstance(file_found_locs, str)
+                    and file_found_locs.strip()
+                ):
+                    merged_found_locs.setdefault(fn, [""])[0] += (
+                        "\n" + file_found_locs
                     )
+                elif "\n".join(file_found_locs).strip():
+                    merged_found_locs.setdefault(fn, [""])[
+                        0
+                    ] += "\n" + "\n".join(file_found_locs)
         return merged_found_locs
 
     # Dump each location sample.
@@ -494,7 +575,8 @@ def merge(args):
                 )
             merged_locs.append({**locs, "found_edit_locs": merged_found_locs})
         with open(
-            f"{args.output_folder}/loc_merged_{st_id}-{en_id}_outputs.jsonl", "w"
+            f"{args.output_folder}/loc_merged_{st_id}-{en_id}_outputs.jsonl",
+            "w",
         ) as f:
             for data in merged_locs:
                 f.write(json.dumps(data) + "\n")
@@ -510,22 +592,28 @@ def check_valid_args(args):
     ), "Cannot use both file_level and start_file"
 
     assert not (
-        args.file_level and args.fine_grain_line_level and not args.related_level
+        args.file_level
+        and args.fine_grain_line_level
+        and not args.related_level
     ), "Cannot use both file_level and fine_grain_line_level without related_level"
 
     assert not (
         (not args.file_level) and (not args.start_file)
     ), "Must use either file_level or start_file"
 
-    assert (not "deepseek" in args.model) or (
-        args.backend == "deepseek"
-    ), "Must specify `--backend deepseek` if using a DeepSeek model"
+    # assert (not "deepseek" in args.model) or (
+    #     args.backend == "deepseek"
+    # ), "Must specify `--backend deepseek` if using a DeepSeek model"
 
 
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--output_folder", type=str, required=True)
+    parser.add_argument(
+        "--output_folder",
+        type=str,
+        default="results/defects4j/related_elements",
+    )
     parser.add_argument("--output_file", type=str, default="loc_outputs.jsonl")
     parser.add_argument(
         "--start_file",
@@ -566,13 +654,20 @@ def main():
         help="Skip localization of instance id's which already contain a localization in the output file.",
     )
     parser.add_argument(
-        "--mock", action="store_true", help="Mock run to compute prompt tokens."
+        "--mock",
+        action="store_true",
+        help="Mock run to compute prompt tokens.",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="gpt-4o-2024-05-13",
-        choices=["gpt-4o-2024-05-13", "deepseek-coder", "gpt-4o-mini-2024-07-18"],
+        default="deepseek-v3",
+        choices=[
+            "gpt-4o-2024-05-13",
+            "deepseek-coder",
+            "gpt-4o-mini-2024-07-18",
+            "gpt-4o-2024-08-06",
+        ],
     )
     parser.add_argument(
         "--backend", type=str, default="openai", choices=["openai", "deepseek"]
@@ -581,7 +676,10 @@ def main():
         "--dataset",
         type=str,
         default="princeton-nlp/SWE-bench_Lite",
-        choices=["princeton-nlp/SWE-bench_Lite", "princeton-nlp/SWE-bench_Verified"],
+        choices=[
+            "princeton-nlp/SWE-bench_Lite",
+            "princeton-nlp/SWE-bench_Verified",
+        ],
         help="Current supported dataset for evaluation",
     )
 
@@ -589,7 +687,9 @@ def main():
     args.output_file = os.path.join(args.output_folder, args.output_file)
     check_valid_args(args)
 
-    os.makedirs(os.path.join(args.output_folder, "localization_logs"), exist_ok=True)
+    os.makedirs(
+        os.path.join(args.output_folder, "localization_logs"), exist_ok=True
+    )
     os.makedirs(args.output_folder, exist_ok=True)
 
     # write the arguments

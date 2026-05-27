@@ -4,5 +4,8 @@ datasets
 tiktoken
 libcst
 llama-index
+llama-index-embeddings-jinaai
 jsonlines
-swebench @ git+https://github.com/princeton-nlp/SWE-bench
+# swebench @ git+https://github.com/princeton-nlp/SWE-bench
+tree_sitter==0.21.3
+tree_sitter_languages

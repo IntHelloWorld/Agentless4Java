@@ -57,12 +57,12 @@ def combine_file_level(args):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--output_folder", type=str, required=True)
+    parser.add_argument("--output_folder", type=str, default="results/defects4j/file_level_combined")
     parser.add_argument("--output_file", type=str, default="combined_locs.jsonl")
-    parser.add_argument("--retrieval_loc_file", type=str, required=True)
-    parser.add_argument("--model_loc_file", type=str, required=True)
+    parser.add_argument("--retrieval_loc_file", type=str, default="results/defects4j/retrievel_embedding/retrieve_locs.jsonl")
+    parser.add_argument("--model_loc_file", type=str, default="results/defects4j/file_level/loc_outputs.jsonl")
     # supports file level (step-1) combination
-    parser.add_argument("--top_n", type=int, required=True)
+    parser.add_argument("--top_n", type=int, default=5)
 
     args = parser.parse_args()
 

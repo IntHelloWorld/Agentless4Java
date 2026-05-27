@@ -3,6 +3,7 @@ import os
 from abc import ABC
 
 import tiktoken
+import tree_sitter_languages
 from llama_index.core import (
     Document,
     MockEmbedding,
@@ -14,18 +15,25 @@ from llama_index.core import (
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core.schema import MetadataMode
+from llama_index.embeddings.jinaai import JinaEmbedding
 from llama_index.embeddings.openai import OpenAIEmbedding
 
+from AgentFL4Java.d4j_interface import D4JRepositoryInterface
 from agentless.util.api_requests import num_tokens_from_messages
 from agentless.util.index_skeleton import parse_global_stmt_from_code
 from agentless.util.preprocess_data import (
     clean_method_left_space,
     get_full_file_paths_and_classes_and_functions,
 )
-from get_repo_structure.get_repo_structure import parse_python_file
+from get_repo_structure.get_repo_structure import (
+    parse_java_file,
+    parse_python_file,
+)
 
 
-def construct_file_meta_data(file_name: str, clazzes: list, functions: list) -> dict:
+def construct_file_meta_data(
+    file_name: str, clazzes: list, functions: list
+) -> dict:
     meta_data = {
         "file_name": file_name,
     }
@@ -77,7 +85,9 @@ def build_file_documents_simple(
         metadata_template="### {key}: {value}",
         text_template="Metadata:\n{metadata_str}\n-----\nCode:\n{content}",
     )
-    doc.excluded_embed_metadata_keys = ["file_name"]  # used for searching only.
+    doc.excluded_embed_metadata_keys = [
+        "file_name"
+    ]  # used for searching only.
     doc.excluded_llm_metadata_keys = ["file_name"]  # used for searching only.
     if not check_meta_data(meta_data):
         # meta_data a bit too long, instead we just exclude meta data
@@ -110,8 +120,12 @@ def build_file_documents_complex(
             text_template="Metadata:\n{metadata_str}\n-----\nCode:\n{content}",
         )
 
-        doc.excluded_embed_metadata_keys = ["file_name"]  # used for searching only.
-        doc.excluded_llm_metadata_keys = ["file_name"]  # used for searching only.
+        doc.excluded_embed_metadata_keys = [
+            "file_name"
+        ]  # used for searching only.
+        doc.excluded_llm_metadata_keys = [
+            "file_name"
+        ]  # used for searching only.
         if not check_meta_data(meta_data):
             doc.excluded_embed_metadata_keys = list(meta_data.keys())
             doc.excluded_llm_metadata_keys = list(meta_data.keys())
@@ -129,10 +143,16 @@ def build_file_documents_complex(
                 metadata_template="### {key}: {value}",
                 text_template="Metadata:\n{metadata_str}\n-----\nCode:\n{content}",
             )
-            doc.excluded_embed_metadata_keys = ["file_name"]  # used for searching only.
-            doc.excluded_llm_metadata_keys = ["file_name"]  # used for searching only.
+            doc.excluded_embed_metadata_keys = [
+                "file_name"
+            ]  # used for searching only.
+            doc.excluded_llm_metadata_keys = [
+                "file_name"
+            ]  # used for searching only.
             if not check_meta_data(method_meta_data):
-                doc.excluded_embed_metadata_keys = list(method_meta_data.keys())
+                doc.excluded_embed_metadata_keys = list(
+                    method_meta_data.keys()
+                )
                 doc.excluded_llm_metadata_keys = list(method_meta_data.keys())
             documents.append(doc)
 
@@ -147,8 +167,12 @@ def build_file_documents_complex(
             text_template="Metadata:\n{metadata_str}\n-----\nCode:\n{content}",
         )
 
-        doc.excluded_embed_metadata_keys = ["file_name"]  # used for searching only.
-        doc.excluded_llm_metadata_keys = ["file_name"]  # used for searching only.
+        doc.excluded_embed_metadata_keys = [
+            "file_name"
+        ]  # used for searching only.
+        doc.excluded_llm_metadata_keys = [
+            "file_name"
+        ]  # used for searching only.
         if not check_meta_data(function_meta_data):
             doc.excluded_embed_metadata_keys = list(function_meta_data.keys())
             doc.excluded_llm_metadata_keys = list(function_meta_data.keys())
@@ -164,8 +188,12 @@ def build_file_documents_complex(
             metadata_template="### {key}: {value}",
             text_template="Metadata:\n{metadata_str}\n-----\nCode:\n{content}",
         )
-        doc.excluded_embed_metadata_keys = ["file_name"]  # used for searching only.
-        doc.excluded_llm_metadata_keys = ["file_name"]  # used for searching only.
+        doc.excluded_embed_metadata_keys = [
+            "file_name"
+        ]  # used for searching only.
+        doc.excluded_llm_metadata_keys = [
+            "file_name"
+        ]  # used for searching only.
         if not check_meta_data(global_meta_data):
             doc.excluded_embed_metadata_keys = list(global_meta_data.keys())
             doc.excluded_llm_metadata_keys = list(global_meta_data.keys())
@@ -175,6 +203,23 @@ def build_file_documents_complex(
 
 
 class EmbeddingIndex(ABC):
+
+    retrieve_query_prompt_java = """
+The test `{fail_test_signatures}` failed.
+
+The test looks like:
+
+```java
+{test_snippets}
+```
+
+It failed with the following error message and call stack:
+
+```
+{failing_traces}
+```
+"""
+
     def __init__(
         self,
         instance_id,
@@ -205,7 +250,9 @@ class EmbeddingIndex(ABC):
 
     def filter_files(self, files):
         if self.filter_type == "given_files":
-            given_files = self.kwargs["given_files"][: self.kwargs["filter_top_n"]]
+            given_files = self.kwargs["given_files"][
+                : self.kwargs["filter_top_n"]
+            ]
             return given_files
         elif self.filter_type == "none":
             # all files are included
@@ -215,15 +262,46 @@ class EmbeddingIndex(ABC):
 
     def retrieve(self, mock=False):
 
+        parser = tree_sitter_languages.get_parser("java")
+
+        bug_name = self.instance_id.replace("@", "_")
+        d4j_interface = D4JRepositoryInterface(bug_name)
+        fail_test_signatures = [
+            signature
+            for signature in d4j_interface.failing_test_signatures
+            if d4j_interface.get_test_snippet(signature) is not None
+        ]
+        if len(fail_test_signatures) > 5:
+            fail_test_signatures = fail_test_signatures[:5]
+        test_snippets = "\n\n".join(
+            d4j_interface.get_test_snippet(signature).rstrip()
+            for signature in fail_test_signatures
+        )
+        failing_traces = "\n\n".join(
+            d4j_interface.get_fail_info(signature, minimize=True).rstrip()
+            for signature in fail_test_signatures
+        )
+        retrieve_query = self.retrieve_query_prompt_java.format(
+            fail_test_signatures=fail_test_signatures,
+            test_snippets=test_snippets,
+            failing_traces=failing_traces,
+        ).strip()
+
         persist_dir = self.persist_dir.format(instance_id=self.instance_id)
         token_counter = TokenCountingHandler(
-            tokenizer=tiktoken.encoding_for_model("text-embedding-3-small").encode
+            tokenizer=tiktoken.encoding_for_model(
+                "text-embedding-3-small"
+            ).encode
         )
         if not os.path.exists(persist_dir) or mock:
-            files, _, _ = get_full_file_paths_and_classes_and_functions(self.structure)
+            files, _, _ = get_full_file_paths_and_classes_and_functions(
+                self.structure
+            )
             filtered_files = self.filter_files(files)
-            self.logger.info(f"Total number of considered files: {len(filtered_files)}")
-            print(f"Total number of considered files: {len(filtered_files)}")
+            self.logger.info(
+                f"Total number of considered files: {len(filtered_files)}"
+            )
+            # print(f"Total number of considered files: {len(filtered_files)}")
             documents = []
 
             for file_content in files:
@@ -234,7 +312,10 @@ class EmbeddingIndex(ABC):
                     continue
 
                 # create documents
-                class_info, function_names, _ = parse_python_file(None, content)
+                # class_info, function_names, _ = parse_python_file(None, content)
+                class_info, function_names, _ = parse_java_file(
+                    None, parser, content
+                )
                 if self.index_type == "simple":
                     docs = build_file_documents_simple(
                         class_info, function_names, file_name, content
@@ -249,7 +330,7 @@ class EmbeddingIndex(ABC):
                 documents.extend(docs)
 
             self.logger.info(f"Total number of documents: {len(documents)}")
-            print(f"Total number of documents: {len(documents)}")
+            # print(f"Total number of documents: {len(documents)}")
 
             if mock:
                 embed_model = MockEmbedding(
@@ -257,17 +338,38 @@ class EmbeddingIndex(ABC):
                 )  # embedding dimension does not matter for mocking.
                 Settings.callback_manager = CallbackManager([token_counter])
             else:
-                embed_model = OpenAIEmbedding(model_name="text-embedding-3-small")
-            index = VectorStoreIndex.from_documents(documents, embed_model=embed_model)
+                # embed_model = OpenAIEmbedding(
+                #     embed_batch_size=2048,
+                #     model_name="text-embedding-3-small",
+                #     api_key="sk-BzzgCowQ83BnFN6k486c0aCd525b4dA8A29746081c5f7665",
+                #     api_base="https://api.gptapi.us/v1",
+                # )
+                embed_model = JinaEmbedding(
+                    api_key="jina_28bca4e341664d619f580aefa0115141D_xM1gOcqRMzwtWnIkW3H2itrzpk",
+                    model="jina-embeddings-v2-base-code",
+                    embed_batch_size=512,
+                )
+            index = VectorStoreIndex.from_documents(
+                documents, embed_model=embed_model, show_progress=False
+            )
             index.storage_context.persist(persist_dir=persist_dir)
         else:
-            storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
-            index = load_index_from_storage(storage_context)
+            embed_model = JinaEmbedding(
+                api_key="jina_28bca4e341664d619f580aefa0115141D_xM1gOcqRMzwtWnIkW3H2itrzpk",
+                model="jina-embeddings-v2-base-code",
+                embed_batch_size=512,
+            )
+            storage_context = StorageContext.from_defaults(
+                persist_dir=persist_dir
+            )
+            index = load_index_from_storage(
+                storage_context, embed_model=embed_model
+            )
 
-        self.logger.info(f"Retrieving with query:\n{self.problem_statement}")
+        self.logger.info(f"Retrieving with query:\n{retrieve_query}")
 
         retriever = VectorIndexRetriever(index=index, similarity_top_k=100)
-        documents = retriever.retrieve(self.problem_statement)
+        documents = retriever.retrieve(retrieve_query)
 
         self.logger.info(
             f"Embedding Tokens: {token_counter.total_embedding_token_count}"
@@ -275,7 +377,9 @@ class EmbeddingIndex(ABC):
         print(f"Embedding Tokens: {token_counter.total_embedding_token_count}")
 
         traj = {
-            "usage": {"embedding_tokens": token_counter.total_embedding_token_count}
+            "usage": {
+                "embedding_tokens": token_counter.total_embedding_token_count
+            }
         }
 
         token_counter.reset_counts()
@@ -296,6 +400,8 @@ class EmbeddingIndex(ABC):
 
             self.logger.info(node.node.text)
 
-            meta_infos.append({"code": node.node.text, "metadata": node.node.metadata})
+            meta_infos.append(
+                {"code": node.node.text, "metadata": node.node.metadata}
+            )
 
         return file_names, meta_infos, traj
